@@ -2,7 +2,9 @@ import { useMemo } from 'react';
 import { useApp } from '../state';
 import type { FoodEntry } from '../lib/types';
 import { MEALS, MEAL_LABEL } from '../lib/types';
-import { dailyTotals, fmtGrams, fmtKcal, itemsTotals, remainingBudget } from '../lib/nutrition';
+import { dailyTotals, extCoverage, fmtGrams, fmtKcal, itemsTotals, remainingBudget } from '../lib/nutrition';
+import { recsFor, targetsOf } from '../coach';
+import { shortName } from '../lib/chat';
 import { addDays, formatDate, nowIso, toDateKey } from '../lib/dates';
 import { weightStats } from '../lib/weight';
 import { Empty, Icon, Meter, Section } from '../components/ui';
@@ -13,7 +15,7 @@ import { fmtLb } from './Weight';
 export function Dashboard() {
   const { data, selectedDate, setSelectedDate, go, setFoodIntent, reload } = useApp();
   const d = data!;
-  const t = d.profile.targets;
+  const t = targetsOf(d.profile);
   const today = toDateKey();
   const date = selectedDate;
   const entries = useMemo(() => d.food.filter((e) => e.date === date).sort((a, b) => a.time.localeCompare(b.time)), [d.food, date]);
@@ -24,6 +26,12 @@ export function Dashboard() {
   const exMin = workouts.reduce((a, e) => a + e.durationMin, 0);
   const ws = weightStats(d.weights, d.profile);
   const status = d.days.find((s) => s.date === date);
+  const dayItems = entries.flatMap((e) => e.items);
+  const partial = (k: 'satFat' | 'sodium' | 'cholesterol') => {
+    const c = extCoverage(dayItems, k);
+    return c.complete ? '' : `, ${c.total - c.known} item${c.total - c.known === 1 ? '' : 's'} unknown`;
+  };
+  const recs = date === today ? recsFor(d, { limit: 2 }) : null;
   const complete = !!status?.complete;
 
   const logFood = () => {
@@ -81,6 +89,19 @@ export function Dashboard() {
         <Meter value={totals.fat} max={t.fat} label="Fat" tone="fat" detail={`${fmtGrams(totals.fat)} / ${fmtGrams(t.fat)} g`} />
         <Meter value={totals.fiber} max={t.fiber} label="Fiber" tone="fiber" detail={`${fmtGrams(totals.fiber)} / ${fmtGrams(t.fiber)} g`} />
         <div className="label-rule thin" />
+        <p className="label-sub">Cholesterol-related</p>
+        <Meter value={totals.satFat ?? 0} max={t.satFat} label="Saturated fat (limit)" tone="satfat" detail={<>{fmtGrams(totals.satFat ?? 0)} / {t.satFat} g{partial('satFat')}</>} />
+        <Meter value={totals.solubleFiber ?? 0} max={t.solubleFiber} label="Soluble fiber" tone="fiber" detail={<>{(totals.solubleFiber ?? 0) > 0 ? `≥ ${fmtGrams(totals.solubleFiber!)}` : '0'} / {t.solubleFiber} g</>} />
+        <div className="label-pair">
+          <span>
+            Sodium <strong>{entries.length ? fmtKcal(totals.sodium ?? 0) : '–'}</strong> / {fmtKcal(t.sodium)} mg{partial('sodium')}
+          </span>
+          <span>
+            Dietary cholesterol <strong>{entries.length ? fmtKcal(totals.cholesterol ?? 0) : '–'}</strong> mg{partial('cholesterol')}
+          </span>
+        </div>
+        <p className="muted small">Soluble fiber is known for only some foods, so it reads as “at least.” These are estimates from logged food, not blood test results.</p>
+        <div className="label-rule thin" />
         <div className="label-foot">
           <span>
             Exercise, est. net: <strong>{workouts.length ? `${fmtKcal(exKcal)} kcal, ${Math.round(exMin)} min` : 'none logged'}</strong>
@@ -89,9 +110,49 @@ export function Dashboard() {
         </div>
       </section>
 
-      <button className="btn btn-primary btn-big" onClick={() => logFood()}>
-        <Icon name="plus" /> Log food
-      </button>
+      <div className="quick-actions">
+        <button className="btn btn-primary" onClick={() => go('chat')}>
+          <Icon name="chat" size={18} /> Log in chat
+        </button>
+        <button className="btn" onClick={() => logFood()}>
+          <Icon name="food" size={18} /> Food form
+        </button>
+        <button className="btn" onClick={() => go('exercise')}>
+          <Icon name="exercise" size={18} /> Workout
+        </button>
+        <button className="btn" onClick={() => go('weight')}>
+          <Icon name="weight" size={18} /> Weigh in
+        </button>
+      </div>
+
+      {recs && recs.suggestions.length > 0 && (
+        <Section title={`Ideas for ${recs.meal === 'snack' ? 'a snack' : MEAL_LABEL[recs.meal].toLowerCase()}`}>
+          <p className="muted small">{recs.headline}</p>
+          <ul className="idea-list">
+            {recs.suggestions.map((s) => (
+              <li key={s.id}>
+                <div>
+                  <strong>{s.name}</strong>
+                  <span className="muted small">
+                    {' '}
+                    {fmtKcal(s.totals.calories)} kcal · P {fmtGrams(s.totals.protein)} g · sat fat {fmtGrams(s.totals.satFat ?? 0)} g · fiber {fmtGrams(s.totals.fiber)} g
+                  </span>
+                  <span className="muted small block">{s.items.map((i) => shortName(i.name)).join(', ')}</span>
+                </div>
+                <button
+                  className="btn btn-small"
+                  onClick={() => {
+                    setFoodIntent({ items: s.items, meal: recs.meal, date, returnTo: 'dashboard' });
+                    go('food');
+                  }}
+                >
+                  Log
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {entries.length === 0 ? (
         <Empty title={date === today ? 'Nothing logged yet today' : 'Nothing logged for this day'}>Days without entries count as not logged, not as zero calories.</Empty>

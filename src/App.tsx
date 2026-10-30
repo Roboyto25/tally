@@ -4,6 +4,7 @@ import { AppProvider, useApp } from './state';
 import type { ScreenName } from './state';
 import { Icon } from './components/ui';
 import { Dashboard } from './screens/Dashboard';
+import { ChatScreen } from './screens/Chat';
 import { FoodScreen } from './screens/Food';
 import { ExerciseScreen } from './screens/Exercise';
 import { WeightScreen } from './screens/Weight';
@@ -12,11 +13,16 @@ import { DataScreen, ProfileEditScreen, SavedScreen, SettingsScreen } from './sc
 import { GoalsScreen, Welcome } from './screens/Profile';
 
 const NAV: { name: ScreenName; label: string; icon: string }[] = [
+  { name: 'chat', label: 'Chat', icon: 'chat' },
   { name: 'dashboard', label: 'Today', icon: 'dashboard' },
-  { name: 'food', label: 'Food', icon: 'food' },
+  { name: 'progress', label: 'Progress', icon: 'progress' },
+];
+
+/** reachable from the sidebar on desktop, and from Today / the top bar on phones */
+const SECONDARY: { name: ScreenName; label: string; icon: string }[] = [
+  { name: 'food', label: 'Food form', icon: 'food' },
   { name: 'exercise', label: 'Exercise', icon: 'exercise' },
   { name: 'weight', label: 'Weight', icon: 'weight' },
-  { name: 'progress', label: 'Progress', icon: 'progress' },
 ];
 
 const SETTINGS_SCREENS: ScreenName[] = ['settings', 'saved', 'goals', 'profile', 'data'];
@@ -45,6 +51,7 @@ function Shell() {
   if (!data) return <Welcome />;
 
   const screens: Record<ScreenName, ReactElement> = {
+    chat: <ChatScreen />,
     dashboard: <Dashboard />,
     food: <FoodScreen key={screen} />,
     exercise: <ExerciseScreen />,
@@ -86,6 +93,21 @@ function Shell() {
                 </button>
               </li>
             ))}
+            <li className="nav-sep" aria-hidden="true" />
+            {SECONDARY.map((n) => (
+              <li key={n.name}>
+                <button
+                  className={screen === n.name ? 'on' : ''}
+                  aria-current={screen === n.name ? 'page' : undefined}
+                  onClick={() => {
+                    if (n.name === 'food') setFoodIntent({});
+                    go(n.name);
+                  }}
+                >
+                  <Icon name={n.icon} /> {n.label}
+                </button>
+              </li>
+            ))}
             <li>
               <button className={inSettings ? 'on' : ''} aria-current={inSettings ? 'page' : undefined} onClick={() => go('settings')}>
                 <Icon name="settings" /> Settings
@@ -98,6 +120,11 @@ function Shell() {
       <header className="topbar">
         <span className="wordmark">Tally</span>
         <span className="topbar-right">
+          {SECONDARY.slice(1).map((n) => (
+            <button key={n.name} className={`icon-btn${screen === n.name ? ' on' : ''}`} aria-label={n.label} onClick={() => go(n.name)}>
+              <Icon name={n.icon} size={20} />
+            </button>
+          ))}
           {!online && (
             <span className="offline-pill" role="status">
               <Icon name="offline" size={16} /> Offline
@@ -126,7 +153,7 @@ function Shell() {
         </p>
       )}
 
-      <main id="main" className="content" tabIndex={-1}>
+      <main id="main" className={`content${screen === 'chat' ? ' content-chat' : ''}`} tabIndex={-1}>
         {screens[screen]}
       </main>
 

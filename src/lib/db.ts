@@ -3,7 +3,7 @@ import { STORE_NAMES, emptyDataSet, normalizeFoodEntry } from './exportImport';
 import type { FoodEntry } from './types';
 
 export const DB_NAME = 'tally-fitness';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -42,6 +42,15 @@ export function openDb(): Promise<IDBDatabase> {
           if (s !== 'customFoods' && s !== 'savedMeals') store.createIndex('profileDate', ['profileId', s === 'goalHistory' ? 'effectiveDate' : 'date'], { unique: false });
         }
         db.createObjectStore('settings', { keyPath: 'key' });
+      }
+      // Version 2: blood tests and per-profile chat history. Adds stores only;
+      // nothing existing is altered, so v1 records carry over unchanged.
+      if (ev.oldVersion < 2) {
+        const labs = db.createObjectStore('labResults', { keyPath: 'id' });
+        labs.createIndex('profileId', 'profileId', { unique: false });
+        labs.createIndex('profileDate', ['profileId', 'date'], { unique: false });
+        const chat = db.createObjectStore('chatMessages', { keyPath: 'id' });
+        chat.createIndex('profileId', 'profileId', { unique: false });
       }
     };
     open.onsuccess = () => {
@@ -131,7 +140,7 @@ export async function applyImport(writes: DataSet, replace: boolean): Promise<vo
 /** Deletes one profile and everything that belongs to it, atomically. */
 export async function deleteProfile(profileId: string): Promise<void> {
   const db = await openDb();
-  const stores: StoreName[] = ['profiles', 'foodEntries', 'customFoods', 'savedMeals', 'exerciseEntries', 'weightEntries', 'goalHistory', 'dayStatus'];
+  const stores: StoreName[] = ['profiles', 'foodEntries', 'customFoods', 'savedMeals', 'exerciseEntries', 'weightEntries', 'goalHistory', 'dayStatus', 'labResults', 'chatMessages'];
   const tx = db.transaction(stores, 'readwrite');
   const finished = done(tx);
   tx.objectStore('profiles').delete(profileId);

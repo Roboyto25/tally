@@ -1,9 +1,9 @@
-import type { DayStatus, ExerciseEntry, FoodDef, FoodEntry, GoalRecord, Profile, SavedMeal, SettingRecord, WeightEntry } from './types';
+import type { ChatMessage, DayStatus, ExerciseEntry, FoodDef, FoodEntry, GoalRecord, LabResult, Profile, SavedMeal, SettingRecord, WeightEntry } from './types';
 import { isValidDateKey, isValidTimeKey } from './dates';
 import { isValidNutrients, itemsTotals } from './nutrition';
 
 export const EXPORT_FORMAT = 'tally-fitness-export';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface DataSet {
   profiles: Profile[];
@@ -14,11 +14,13 @@ export interface DataSet {
   weightEntries: WeightEntry[];
   goalHistory: GoalRecord[];
   dayStatus: DayStatus[];
+  labResults: LabResult[];
+  chatMessages: ChatMessage[];
   settings: SettingRecord[];
 }
 
 export type StoreName = keyof DataSet;
-export const STORE_NAMES: StoreName[] = ['profiles', 'foodEntries', 'customFoods', 'savedMeals', 'exerciseEntries', 'weightEntries', 'goalHistory', 'dayStatus', 'settings'];
+export const STORE_NAMES: StoreName[] = ['profiles', 'foodEntries', 'customFoods', 'savedMeals', 'exerciseEntries', 'weightEntries', 'goalHistory', 'dayStatus', 'labResults', 'chatMessages', 'settings'];
 export const STORE_LABELS: Record<StoreName, string> = {
   profiles: 'Profiles',
   foodEntries: 'Food entries',
@@ -28,6 +30,8 @@ export const STORE_LABELS: Record<StoreName, string> = {
   weightEntries: 'Weigh-ins',
   goalHistory: 'Goal changes',
   dayStatus: 'Day status marks',
+  labResults: 'Blood tests',
+  chatMessages: 'Chat messages',
   settings: 'Settings',
 };
 
@@ -40,7 +44,7 @@ export interface ExportFile {
 }
 
 export function emptyDataSet(): DataSet {
-  return { profiles: [], foodEntries: [], customFoods: [], savedMeals: [], exerciseEntries: [], weightEntries: [], goalHistory: [], dayStatus: [], settings: [] };
+  return { profiles: [], foodEntries: [], customFoods: [], savedMeals: [], exerciseEntries: [], weightEntries: [], goalHistory: [], dayStatus: [], labResults: [], chatMessages: [], settings: [] };
 }
 
 export function buildExport(data: DataSet, appVersion: string): ExportFile {
@@ -108,6 +112,19 @@ const VALIDATORS: Record<StoreName, Validator> = {
   },
   dayStatus: (r) => {
     if (!isStr(r.id) || !isStr(r.profileId) || !isValidDateKey(r.date) || typeof r.complete !== 'boolean') return 'invalid day status';
+    return null;
+  },
+  labResults: (r) => {
+    if (!isStr(r.id) || !isStr(r.profileId) || !isValidDateKey(r.date)) return 'missing id, profile, or date';
+    if (r.unit !== 'mg/dL' && r.unit !== 'mmol/L') return 'invalid unit';
+    const vals = ['ldl', 'hdl', 'total', 'triglycerides'].map((k) => r[k]);
+    if (vals.every((v) => v === undefined || v === null)) return 'no measurements';
+    if (vals.some((v) => v !== undefined && v !== null && !isNum(v, 0, 2000))) return 'invalid measurement';
+    return null;
+  },
+  chatMessages: (r) => {
+    if (!isStr(r.id) || !isStr(r.profileId) || (r.role !== 'user' && r.role !== 'tally') || typeof r.text !== 'string') return 'invalid chat message';
+    if (!isIso(r.createdAt)) return 'invalid timestamp';
     return null;
   },
   settings: (r) => (isStr(r.key) ? null : 'missing key'),
@@ -195,6 +212,7 @@ function signature(store: StoreName, r: Record<string, unknown>): string | null 
     case 'customFoods':
       return `${r.profileId}|${String(r.name).toLowerCase()}`;
     case 'dayStatus':
+    case 'labResults':
       return `${r.profileId}|${r.date}`;
     default:
       return null;
@@ -292,10 +310,11 @@ export function foodCsv(entries: FoodEntry[], profileName: (id: string) => strin
   const rows: unknown[][] = [];
   for (const e of [...entries].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))) {
     for (const i of e.items) {
-      rows.push([profileName(e.profileId), e.date, e.time, e.meal, i.name, i.quantity, i.unit, r1(i.nutrients.calories), r1(i.nutrients.protein), r1(i.nutrients.carbs), r1(i.nutrients.fat), r1(i.nutrients.fiber), i.source, i.estimated ? 'yes' : 'no']);
+      const opt = (v: number | undefined) => (typeof v === 'number' ? r1(v) : ''); // blank = unknown, not zero
+      rows.push([profileName(e.profileId), e.date, e.time, e.meal, i.name, i.quantity, i.unit, r1(i.nutrients.calories), r1(i.nutrients.protein), r1(i.nutrients.carbs), r1(i.nutrients.fat), opt(i.nutrients.satFat), r1(i.nutrients.fiber), opt(i.nutrients.solubleFiber), opt(i.nutrients.cholesterol), opt(i.nutrients.sodium), i.source, i.estimated ? 'yes' : 'no']);
     }
   }
-  return toCsv(['profile', 'date', 'time', 'meal', 'food', 'quantity', 'unit', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'source', 'estimated'], rows);
+  return toCsv(['profile', 'date', 'time', 'meal', 'food', 'quantity', 'unit', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'sat_fat_g', 'fiber_g', 'soluble_fiber_g', 'cholesterol_mg', 'sodium_mg', 'source', 'estimated'], rows);
 }
 
 export function weightCsv(entries: WeightEntry[], profileName: (id: string) => string): string {
@@ -312,4 +331,11 @@ export function exerciseCsv(entries: ExerciseEntry[], profileName: (id: string) 
 /** Recompute derived totals on import so stored totals always match items. */
 export function normalizeFoodEntry(e: FoodEntry): FoodEntry {
   return { ...e, totals: itemsTotals(e.items) };
+}
+
+export function labCsv(entries: { profileId: string; date: string; unit: string; ldl?: number; hdl?: number; total?: number; triglycerides?: number; notes?: string }[], profileName: (id: string) => string): string {
+  return toCsv(
+    ['profile', 'date', 'unit', 'ldl', 'hdl', 'total_cholesterol', 'triglycerides', 'notes'],
+    [...entries].sort((a, b) => a.date.localeCompare(b.date)).map((l) => [profileName(l.profileId), l.date, l.unit, l.ldl ?? '', l.hdl ?? '', l.total ?? '', l.triglycerides ?? '', l.notes ?? '']),
+  );
 }

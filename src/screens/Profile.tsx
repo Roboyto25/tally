@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ActivityLevel, GoalRecord, Profile, Sex, Targets } from '../lib/types';
-import { ACTIVITY, WEEKLY_RATES, computeTargets, consistencyWarning, macrosFor } from '../lib/targets';
+import { ACTIVITY, WEEKLY_RATES, computeTargets, consistencyWarning, macrosFor, resolveTargets } from '../lib/targets';
 import { useApp } from '../state';
 import * as db from '../lib/db';
 import { uid } from '../lib/id';
@@ -257,6 +257,12 @@ export function TargetSummary({ t }: { t: Targets }) {
         <dt>Fiber</dt>
         <dd>{Math.round(t.fiber)} g</dd>
       </div>
+      {t.satFat !== undefined && (
+        <div className="satfat">
+          <dt>Sat fat max</dt>
+          <dd>{Math.round(t.satFat)} g</dd>
+        </div>
+      )}
     </dl>
   );
 }
@@ -319,7 +325,7 @@ export function ProfilePicker({ onAdd }: { onAdd: () => void }) {
 export function GoalsScreen() {
   const { data, reload, toast, go } = useApp();
   const p = data!.profile;
-  const [t, setT] = useState<Targets>({ ...p.targets });
+  const [t, setT] = useState<Targets>({ ...resolveTargets(p.targets) });
   const [targetWeight, setTargetWeight] = useState<number | null>(p.targetWeight);
   const [rate, setRate] = useState(p.weeklyRate);
   const [confirmRecalc, setConfirmRecalc] = useState(false);
@@ -358,10 +364,24 @@ export function GoalsScreen() {
           <Field label="Fat" htmlFor="g-f">
             <NumberInput id="g-f" value={t.fat} onChange={(v) => set('fat', v)} suffix="g" />
           </Field>
-          <Field label="Fiber" htmlFor="g-fib" hint="Counted inside total carbs.">
+          <Field label="Fiber" htmlFor="g-fib" hint="Counted inside total carbs. 25–30 g suits many adults.">
             <NumberInput id="g-fib" value={t.fiber} onChange={(v) => set('fiber', v)} suffix="g" />
           </Field>
         </div>
+      </Section>
+      <Section title="Cholesterol-related targets">
+        <div className="grid2">
+          <Field label="Saturated fat limit" htmlFor="g-sat" hint={`Default under 10% of calories (${Math.round((t.calories * 0.1) / 9)} g). AHA suggests about 6% (${Math.round((t.calories * 0.06) / 9)} g) for lowering LDL.`}>
+            <NumberInput id="g-sat" value={t.satFat ?? null} onChange={(v) => set('satFat', v)} suffix="g" />
+          </Field>
+          <Field label="Soluble fiber goal" htmlFor="g-sol" hint="5–10 g/day is commonly cited for LDL lowering. Part of total fiber.">
+            <NumberInput id="g-sol" value={t.solubleFiber ?? null} onChange={(v) => set('solubleFiber', v)} suffix="g" />
+          </Field>
+          <Field label="Sodium limit" htmlFor="g-na" hint="2,300 mg is the general upper limit.">
+            <NumberInput id="g-na" value={t.sodium ?? null} onChange={(v) => set('sodium', v)} suffix="mg" />
+          </Field>
+        </div>
+        <p className="hint">Dietary cholesterol is tracked and shown, but has no limit here; for most people saturated fat affects blood LDL more. If your clinician gave you specific targets, use theirs.</p>
         {warning && (
           <p className="warn" role="status">
             {warning}{' '}

@@ -11,25 +11,44 @@ export function buildFoodPrompt(description: string, opts: { photo?: boolean } =
     'Food description:',
     desc,
     '',
-    'Use reasonable portions and clearly state assumptions. If important information is missing, ask a concise follow-up question rather than inventing details.',
+    'Use reasonable portions and clearly state assumptions, including likely additions such as cooking oil, butter, sauces, or dressing. If important information is missing, ask one concise follow-up question rather than inventing details.',
     '',
-    'Return the following for each food item:',
-    '- Food name',
-    '- Quantity and unit',
-    '- Calories in kcal',
-    '- Protein in grams',
-    '- Carbohydrates in grams (total, including fiber)',
-    '- Fat in grams',
-    '- Fiber in grams',
+    'For each food item return: name, quantity and unit, calories (kcal), protein (g), total carbohydrates (g, including fiber), total fat (g), saturated fat (g), total fiber (g), soluble fiber (g) only if it can be reasonably estimated, dietary cholesterol (mg), and sodium (mg).',
+    'Use null for any value you cannot reasonably estimate. Do not use 0 to mean unknown.',
     '',
-    'Also return the meal totals.',
-    '',
-    'Use plausible nutrition estimates based on common nutrition references. Avoid false precision. Clearly identify uncertain estimates.',
+    'Use plausible estimates from common nutrition references. Avoid false precision. Mark uncertain items.',
     '',
     'Finish with a JSON code block in exactly this shape so it can be pasted into a nutrition tracker:',
     '```json',
-    '{"items":[{"name":"","quantity":1,"unit":"","calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0,"uncertain":false}],"totals":{"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0}}',
+    '{"items":[{"name":"","quantity":1,"unit":"","calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"saturated_fat_g":0,"fiber_g":0,"soluble_fiber_g":null,"cholesterol_mg":0,"sodium_mg":0,"uncertain":false}],"assumptions":"","totals":{"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"saturated_fat_g":0,"fiber_g":0}}',
     '```',
+  ].join('\n');
+}
+
+export interface PlanContext {
+  request: string;
+  remaining: { calories: number; protein: number; satFat: number; fiber: number };
+  meal?: string;
+}
+
+/**
+ * Meal-planning prompt. Contains only today's remaining targets and the request,
+ * never weight, history, or lab results.
+ */
+export function buildPlanPrompt(ctx: PlanContext): string {
+  const r = ctx.remaining;
+  return [
+    `I'm trying to lose weight and lower my LDL cholesterol through diet. ${ctx.request.trim() || `Suggest ${ctx.meal ?? 'a meal'} ideas.`}`,
+    '',
+    'What I have left for today:',
+    `- Calories: about ${Math.max(0, Math.round(r.calories))} kcal`,
+    `- Protein still needed: about ${Math.max(0, Math.round(r.protein))} g`,
+    `- Saturated fat allowance left: about ${Math.max(0, Math.round(r.satFat))} g`,
+    `- Fiber still needed: about ${Math.max(0, Math.round(r.fiber))} g`,
+    '',
+    'Give 2 or 3 specific options with portions. Prefer unsaturated fats over saturated fats, and foods with soluble fiber such as oats, beans, lentils, and fruit. For each option list estimated calories, protein, saturated fat, and fiber. Keep it practical; no medical advice.',
+    '',
+    'For the option I pick, I will ask you for a JSON nutrition breakdown afterwards.',
   ].join('\n');
 }
 
@@ -44,12 +63,13 @@ export interface ImportedItem {
 
 export interface ImportResult {
   items: ImportedItem[];
+  assumptions?: string;
   format: 'json' | 'table' | 'lines' | 'none';
   errors: string[];
   totals?: Nutrients;
 }
 
-const LIMITS: Record<keyof Nutrients, number> = { calories: 5000, protein: 400, carbs: 800, fat: 400, fiber: 150 };
+const LIMITS: Record<keyof Nutrients, number> = { calories: 5000, protein: 400, carbs: 800, fat: 400, fiber: 150, satFat: 200, solubleFiber: 60, cholesterol: 3000, sodium: 20000 };
 
 /** "210", "~210", "210 kcal", "200-250" (midpoint), "12.5g" */
 export function parseNumber(v: unknown): { value: number | null; approx: boolean } {
@@ -74,10 +94,16 @@ function pick(obj: Record<string, unknown>, keys: string[]): unknown {
 const KEYMAP: Record<keyof Nutrients, string[]> = {
   calories: ['calories', 'kcal', 'calorieskcal', 'energy', 'energykcal', 'cal'],
   protein: ['protein', 'proteing', 'proteingrams'],
-  carbs: ['carbs', 'carbsg', 'carbohydrates', 'carbohydratesg', 'carbohydrate', 'carbohydrateg', 'totalcarbs', 'carbohydratesgrams'],
-  fat: ['fat', 'fatg', 'totalfat', 'fatgrams'],
-  fiber: ['fiber', 'fiberg', 'fibre', 'fibreg', 'dietaryfiber', 'fibergrams'],
+  carbs: ['carbs', 'carbsg', 'carbohydrates', 'carbohydratesg', 'carbohydrate', 'carbohydrateg', 'totalcarbs', 'totalcarbsg', 'totalcarbohydratesg', 'carbohydratesgrams'],
+  fat: ['fat', 'fatg', 'totalfat', 'totalfatg', 'fatgrams'],
+  fiber: ['fiber', 'fiberg', 'fibre', 'fibreg', 'dietaryfiber', 'totalfiber', 'totalfiberg', 'fibergrams'],
+  satFat: ['saturatedfat', 'saturatedfatg', 'satfat', 'satfatg', 'saturatedfatgrams'],
+  solubleFiber: ['solublefiber', 'solublefiberg', 'solublefibre', 'solublefibreg'],
+  cholesterol: ['cholesterol', 'cholesterolmg', 'dietarycholesterol', 'dietarycholesterolmg'],
+  sodium: ['sodium', 'sodiummg'],
 };
+
+const OPTIONAL_KEYS: (keyof Nutrients)[] = ['satFat', 'solubleFiber', 'cholesterol', 'sodium'];
 
 function itemFromObject(o: Record<string, unknown>): ImportedItem | null {
   const name = pick(o, ['name', 'food', 'foodname', 'item', 'description']);
@@ -89,9 +115,10 @@ function itemFromObject(o: Record<string, unknown>): ImportedItem | null {
     const raw = pick(o, KEYMAP[key]);
     const { value, approx } = parseNumber(raw);
     if (approx) uncertain = true;
-    if (raw === undefined || raw === null || raw === '') {
-      if (key === 'fiber') continue; // fiber is often omitted; treat as 0 but note it
-      problems.push(`Missing ${key}.`);
+    if (raw === undefined || raw === null || raw === '' || (typeof raw === 'string' && /^(n\/?a|unknown|null|-|–)$/i.test(raw.trim()))) {
+      // unknown stays unknown: optional nutrients are left out, required ones are flagged
+      if (OPTIONAL_KEYS.includes(key)) continue;
+      problems.push(key === 'fiber' ? 'Fiber not given. Enter it, or 0 if there is none.' : `Missing ${key}.`);
       continue;
     }
     if (value === null) problems.push(`${key} is not a number.`);
@@ -99,6 +126,8 @@ function itemFromObject(o: Record<string, unknown>): ImportedItem | null {
     else if (value > LIMITS[key]) problems.push(`${key} of ${value} looks too high for one item.`);
     else n[key] = value;
   }
+  if (n.satFat !== undefined && n.satFat > n.fat + 0.5) problems.push('Saturated fat is larger than total fat.');
+  if (n.solubleFiber !== undefined && n.solubleFiber > n.fiber + 0.5) problems.push('Soluble fiber is larger than total fiber.');
   let quantity = 1;
   let unit = 'serving';
   const qRaw = pick(o, ['quantity', 'qty', 'amount', 'servings']);
@@ -138,7 +167,8 @@ function tryJson(text: string): ImportResult | null {
     if (!Array.isArray(arr)) continue;
     const items = arr.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object').map(itemFromObject).filter((x): x is ImportedItem => !!x).filter((x) => !/^(meal\s+)?totals?$/i.test(x.name));
     if (!items.length) continue;
-    return { items, format: 'json', errors: [], totals: Array.isArray(data) ? undefined : totalsFrom((data as Record<string, unknown>).totals) };
+    const asm = Array.isArray(data) ? undefined : (data as Record<string, unknown>).assumptions;
+    return { items, format: 'json', errors: [], totals: Array.isArray(data) ? undefined : totalsFrom((data as Record<string, unknown>).totals), assumptions: typeof asm === 'string' && asm.trim() ? asm.trim() : Array.isArray(asm) ? asm.join(' ') : undefined };
   }
   return null;
 }

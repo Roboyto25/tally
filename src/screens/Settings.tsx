@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../state';
 import type { FoodDef, MealBoundaries, Nutrients, SavedMeal } from '../lib/types';
+import { EXT_KEYS } from '../lib/types';
 import * as db from '../lib/db';
-import { buildExport, exerciseCsv, foodCsv, planImport, STORE_LABELS, STORE_NAMES, validateExport, weightCsv } from '../lib/exportImport';
+import { buildExport, exerciseCsv, foodCsv, labCsv, planImport, STORE_LABELS, STORE_NAMES, validateExport, weightCsv } from '../lib/exportImport';
 import type { ExportFile, ImportPlan } from '../lib/exportImport';
 import { fmtKcal, fmtGrams, KEYS } from '../lib/nutrition';
 import { nowIso, toDateKey } from '../lib/dates';
@@ -100,7 +101,8 @@ export function SettingsScreen() {
       <Section title="Privacy">
         <div className="prose">
           <p>Everything you log is stored in this browser’s IndexedDB on this device. Tally has no server, no accounts, no analytics, and no ads. GitHub hosts the app’s files only; it never receives your records.</p>
-          <p>The only time anything leaves the device is when you choose to: copying a food description to ChatGPT, sharing a photo with it, or exporting a backup file. The ChatGPT prompt contains just the food description, never your weight, targets, or history.</p>
+          <p>The chat runs entirely on this device: the food matching, totals, recommendations, and weekly summaries are all calculated here, with no AI service involved. Chat history is stored per profile, on this device only.</p>
+          <p>The only time anything leaves the device is when you choose to: copying a prompt to ChatGPT, sharing a photo with it, or exporting a backup file. A food prompt contains just the food description. A meal-idea prompt contains only today’s remaining calories, protein, saturated fat, and fiber. Neither includes your weight, history, or blood tests.</p>
           <p>Records are per device. Your phone and your computer each keep their own copy; use Backup and transfer to move them. Clearing site data, deleting the installed app, or private browsing can erase records, so export a backup regularly.</p>
           <p>Profiles separate two people’s logs for everyday use. They aren’t a security boundary: anyone using this device can open either profile.</p>
         </div>
@@ -218,9 +220,9 @@ export function DataScreen() {
     }
   }
 
-  async function exportCsv(kind: 'food' | 'weight' | 'exercise') {
+  async function exportCsv(kind: 'food' | 'weight' | 'exercise' | 'labs') {
     const all = await db.exportAll();
-    const csv = kind === 'food' ? foodCsv(all.foodEntries, nameOf) : kind === 'weight' ? weightCsv(all.weightEntries, nameOf) : exerciseCsv(all.exerciseEntries, nameOf);
+    const csv = kind === 'food' ? foodCsv(all.foodEntries, nameOf) : kind === 'weight' ? weightCsv(all.weightEntries, nameOf) : kind === 'labs' ? labCsv(all.labResults, nameOf) : exerciseCsv(all.exerciseEntries, nameOf);
     downloadText(`tally-${kind}-${stamp}.csv`, 'text/csv', csv);
   }
 
@@ -303,6 +305,9 @@ export function DataScreen() {
           </button>
           <button className="btn" onClick={() => void exportCsv('exercise')}>
             Workouts
+          </button>
+          <button className="btn" onClick={() => void exportCsv('labs')}>
+            Blood tests
           </button>
         </div>
       </Section>
@@ -582,8 +587,8 @@ function CustomFoodDialog({ onClose, onSave }: { onClose: () => void; onSave: (f
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('serving');
   const [grams, setGrams] = useState<number | null>(null);
-  const [n, setN] = useState<Record<keyof Nutrients, number | null>>({ calories: null, protein: null, carbs: null, fat: null, fiber: 0 });
-  const valid = name.trim() && unit.trim() && KEYS.every((k) => n[k] !== null && n[k]! >= 0) && (n.fiber ?? 0) <= (n.carbs ?? 0);
+  const [n, setN] = useState<Record<keyof Nutrients, number | null>>({ calories: null, protein: null, carbs: null, fat: null, fiber: 0, satFat: null, solubleFiber: null, cholesterol: null, sodium: null });
+  const valid = name.trim() && unit.trim() && KEYS.every((k) => n[k] !== null && n[k]! >= 0) && (n.fiber ?? 0) <= (n.carbs ?? 0) && (n.satFat ?? 0) <= (n.fat ?? 0);
   return (
     <Dialog
       title="Add a food"
@@ -608,7 +613,7 @@ function CustomFoodDialog({ onClose, onSave }: { onClose: () => void; onSave: (f
                 synonyms: [name.trim().toLowerCase()],
                 basisAmount: 1,
                 basisUnit: 'serving',
-                per: { calories: n.calories!, protein: n.protein!, carbs: n.carbs!, fat: n.fat!, fiber: n.fiber! },
+                per: { calories: n.calories!, protein: n.protein!, carbs: n.carbs!, fat: n.fat!, fiber: n.fiber!, ...Object.fromEntries(EXT_KEYS.filter((k) => n[k] !== null).map((k) => [k, n[k]])) },
                 portions,
                 defaultUnit: u,
                 source: 'Entered by you',
@@ -646,7 +651,17 @@ function CustomFoodDialog({ onClose, onSave }: { onClose: () => void; onSave: (f
           </label>
         ))}
       </div>
+      <p className="hint">Optional, from the label. Leave blank if it isn’t listed; blank means unknown, not zero.</p>
+      <div className="nutrient-grid ext">
+        {EXT_KEYS.map((k) => (
+          <label key={k}>
+            <span>{{ satFat: 'Sat fat g', solubleFiber: 'Soluble fiber g', cholesterol: 'Cholesterol mg', sodium: 'Sodium mg' }[k]}</span>
+            <NumberInput label={k} placeholder="?" value={n[k]} onChange={(v) => setN({ ...n, [k]: v })} />
+          </label>
+        ))}
+      </div>
       {(n.fiber ?? 0) > (n.carbs ?? 0) && <p className="warn small">Fiber is part of total carbs, so it can’t be larger.</p>}
+      {(n.satFat ?? 0) > (n.fat ?? 0) && <p className="warn small">Saturated fat is part of total fat, so it can’t be larger.</p>}
       {n.calories !== null && n.protein !== null && n.carbs !== null && n.fat !== null && Math.abs(n.protein * 4 + n.carbs * 4 + n.fat * 9 - n.calories) > Math.max(20, n.calories * 0.2) && (
         <p className="hint">The macros don’t quite add up to the calories ({Math.round(n.protein * 4 + n.carbs * 4 + n.fat * 9)} kcal from macros). That’s fine if it matches the label.</p>
       )}

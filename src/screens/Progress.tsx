@@ -7,6 +7,10 @@ import type { Aggregate, Bucket, DayBasis } from '../lib/progress';
 import { fmtGrams, fmtKcal } from '../lib/nutrition';
 import { sortWeights } from '../lib/weight';
 import { Field, Section, Segmented } from '../components/ui';
+import { LabsSection } from '../components/Labs';
+import { targetsOf } from '../coach';
+import { topSatFatSources } from '../lib/insights';
+import { linearTrend } from '../lib/weight';
 import { BarChart, LineChart } from '../components/Charts';
 import type { BarDatum, LineSeries } from '../components/Charts';
 
@@ -22,7 +26,7 @@ function defaultRange(view: View, today: string): [string, string] {
 export function ProgressScreen() {
   const { data } = useApp();
   const d = data!;
-  const t = d.profile.targets;
+  const t = targetsOf(d.profile);
   const today = toDateKey();
   const [view, setView] = useState<View>('weekly');
   const [range, setRange] = useState<[string, string]>(defaultRange('weekly', today));
@@ -35,6 +39,8 @@ export function ProgressScreen() {
   const [pf, pt] = previousPeriod(from, to);
   const prevAgg = aggregate(summarizeDays(pf, pt, d.food, d.exercise, d.days), t, basis);
   const wChange = weightChangeInRange(d.weights, from, to);
+  const satSources = valid ? topSatFatSources(d.food, from, to) : [];
+  const wTrend = linearTrend(d.weights.filter((w) => w.date >= from && w.date <= to));
 
   const buckets: Bucket[] = useMemo(() => {
     if (view === 'daily') return days.map((x) => ({ key: x.date, label: formatDate(x.date, { month: 'numeric', day: 'numeric' }), from: x.date, to: x.date, days: [x] }));
@@ -94,6 +100,11 @@ export function ProgressScreen() {
         <BarChart title={view === 'daily' ? 'Protein per day' : 'Average protein per logged day'} unit="g" data={proBars} target={t.protein} tone="protein" />
       </Section>
 
+      <Section title="Saturated fat">
+        <BarChart title={view === 'daily' ? 'Saturated fat per day' : 'Average saturated fat per logged day'} unit="g" data={bAgg.map(({ b, a }) => ({ label: b.label, value: a.avg ? a.avg.satFat ?? 0 : null }))} target={t.satFat} tone="satfat" />
+        {satSources.length > 0 && <p className="muted small">Biggest sources in this range: {satSources.map((x) => `${x.name} (${Math.round(x.grams)} g)`).join(', ')}.</p>}
+      </Section>
+
       <Section title="Macros by period">
         <div className="table-scroll">
           <table className="mini-table">
@@ -104,6 +115,7 @@ export function ProgressScreen() {
                 <th scope="col">Protein</th>
                 <th scope="col">Carbs</th>
                 <th scope="col">Fat</th>
+                <th scope="col">Sat fat</th>
                 <th scope="col">Fiber</th>
                 <th scope="col">Days</th>
               </tr>
@@ -118,10 +130,11 @@ export function ProgressScreen() {
                       <td>{fmtGrams(a.avg.protein)}</td>
                       <td>{fmtGrams(a.avg.carbs)}</td>
                       <td>{fmtGrams(a.avg.fat)}</td>
+                      <td>{fmtGrams(a.avg.satFat ?? 0)}</td>
                       <td>{fmtGrams(a.avg.fiber)}</td>
                     </>
                   ) : (
-                    <td colSpan={5} className="muted">
+                    <td colSpan={6} className="muted">
                       Not logged
                     </td>
                   )}
@@ -133,7 +146,7 @@ export function ProgressScreen() {
             </tbody>
           </table>
         </div>
-        <p className="hint">Values are averages per counted day, in grams. Target: {fmtKcal(t.calories)} kcal, {t.protein} g protein, {t.carbs} g carbs, {t.fat} g fat, {t.fiber} g fiber.</p>
+        <p className="hint">Values are averages per counted day, in grams. Target: {fmtKcal(t.calories)} kcal, {t.protein} g protein, {t.carbs} g carbs, {t.fat} g fat (saturated under {t.satFat} g), {t.fiber} g fiber.</p>
       </Section>
 
       <Section title="Exercise">
@@ -150,8 +163,10 @@ export function ProgressScreen() {
           series={wSeries}
           xLabels={[0, Math.round(span / 2), span].map((x) => ({ x, label: formatDate(addDays(from, x), { month: 'short', day: 'numeric' }) }))}
         />
-        <p className="muted small">{wChange ? `${wChange.change > 0 ? '+' : ''}${wChange.change.toFixed(1)} lb between ${formatDate(wChange.first.date, { month: 'short', day: 'numeric' })} and ${formatDate(wChange.last.date, { month: 'short', day: 'numeric' })}.` : 'Needs at least two weigh-ins in this range to show a change.'}</p>
+        <p className="muted small">{wChange ? `${wChange.change > 0 ? '+' : ''}${wChange.change.toFixed(1)} lb between ${formatDate(wChange.first.date, { month: 'short', day: 'numeric' })} and ${formatDate(wChange.last.date, { month: 'short', day: 'numeric' })}.` : 'Needs at least two weigh-ins in this range to show a change.'}{wTrend ? ` Trend: ${wTrend.slopePerWeek <= 0 ? 'losing' : 'gaining'} about ${Math.abs(wTrend.slopePerWeek).toFixed(1)} lb a week (fitted over ${wTrend.n} weigh-ins).` : ''}</p>
       </Section>
+
+      <LabsSection />
     </div>
   );
 }
@@ -168,10 +183,13 @@ function SummaryTable({ cur, prev, weightChange, prevLabel }: { cur: Aggregate; 
     ['Avg protein', cur.avg ? `${fmtGrams(cur.avg.protein)} g` : '–', prev.avg ? `${fmtGrams(prev.avg.protein)} g` : '–', diff(cur.avg?.protein, prev.avg?.protein, 'g')],
     ['Avg carbs', cur.avg ? `${fmtGrams(cur.avg.carbs)} g` : '–', prev.avg ? `${fmtGrams(prev.avg.carbs)} g` : '–', diff(cur.avg?.carbs, prev.avg?.carbs, 'g')],
     ['Avg fat', cur.avg ? `${fmtGrams(cur.avg.fat)} g` : '–', prev.avg ? `${fmtGrams(prev.avg.fat)} g` : '–', diff(cur.avg?.fat, prev.avg?.fat, 'g')],
+    ['Avg saturated fat', cur.avg ? `${fmtGrams(cur.avg.satFat ?? 0)} g` : '–', prev.avg ? `${fmtGrams(prev.avg.satFat ?? 0)} g` : '–', diff(cur.avg?.satFat ?? undefined, prev.avg?.satFat ?? undefined, 'g')],
     ['Avg fiber', cur.avg ? `${fmtGrams(cur.avg.fiber)} g` : '–', prev.avg ? `${fmtGrams(prev.avg.fiber)} g` : '–', diff(cur.avg?.fiber, prev.avg?.fiber, 'g')],
     ['Days logged', `${cur.daysLogged}/${cur.days}`, `${prev.daysLogged}/${prev.days}`, diff(cur.daysLogged, prev.daysLogged, 'days')],
     ['Within 10% of calorie target', cur.adherence ? `${cur.adherence.calorieDays}/${cur.adherence.counted} days` : '–', prev.adherence ? `${prev.adherence.calorieDays}/${prev.adherence.counted} days` : '–', ''],
     ['Protein target met', cur.adherence ? `${cur.adherence.proteinDays}/${cur.adherence.counted} days` : '–', prev.adherence ? `${prev.adherence.proteinDays}/${prev.adherence.counted} days` : '–', ''],
+    ['Within sat-fat limit', cur.adherence ? `${cur.adherence.satFatDays}/${cur.adherence.counted} days` : '–', prev.adherence ? `${prev.adherence.satFatDays}/${prev.adherence.counted} days` : '–', ''],
+    ['Fiber target met', cur.adherence ? `${cur.adherence.fiberDays}/${cur.adherence.counted} days` : '–', prev.adherence ? `${prev.adherence.fiberDays}/${prev.adherence.counted} days` : '–', ''],
     ['Workouts', String(cur.workouts), String(prev.workouts), diff(cur.workouts, prev.workouts, '')],
     ['Exercise minutes', String(Math.round(cur.exerciseMinutes)), String(Math.round(prev.exerciseMinutes)), diff(cur.exerciseMinutes, prev.exerciseMinutes, 'min')],
     ['Weight change', weightChange === null ? '–' : `${weightChange > 0 ? '+' : ''}${weightChange.toFixed(1)} lb`, '', ''],

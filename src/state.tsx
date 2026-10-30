@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { DayStatus, ExerciseEntry, FoodDef, FoodEntry, GoalRecord, Profile, SavedMeal, WeightEntry } from './lib/types';
+import type { DayStatus, ExerciseEntry, FoodDef, FoodEntry, GoalRecord, LabResult, LoggedItem, MealCategory, Profile, SavedMeal, WeightEntry } from './lib/types';
 import * as db from './lib/db';
 import { FOODS, FOOD_BY_ID } from './data/foods';
 import { buildIndex } from './lib/parser';
 import type { FoodIndex } from './lib/parser';
 import { toDateKey } from './lib/dates';
 
-export type ScreenName = 'dashboard' | 'food' | 'exercise' | 'weight' | 'progress' | 'settings' | 'saved' | 'goals' | 'profile' | 'data';
+export type ScreenName = 'chat' | 'dashboard' | 'food' | 'exercise' | 'weight' | 'progress' | 'settings' | 'saved' | 'goals' | 'profile' | 'data';
 
 export interface ProfileData {
   profile: Profile;
@@ -18,6 +18,7 @@ export interface ProfileData {
   customFoods: FoodDef[];
   goals: GoalRecord[];
   days: DayStatus[];
+  labs: LabResult[];
 }
 
 export interface FoodIntent {
@@ -25,6 +26,17 @@ export interface FoodIntent {
   date?: string;
   mealId?: string;
   text?: string;
+  /** prefilled items, e.g. from a chat meal card or a recommendation */
+  items?: LoggedItem[];
+  meal?: MealCategory;
+  /** open straight into the ChatGPT handoff */
+  startPhase?: 'chatgpt';
+  /** chat card this entry came from; marked saved when the entry is saved */
+  chatMessageId?: string;
+  /** where to go after saving or cancelling */
+  returnTo?: ScreenName;
+  /** a photo picked in the chat for the ChatGPT hand-off (memory only, never stored) */
+  photo?: File;
 }
 
 interface Ctx {
@@ -56,11 +68,11 @@ export function useApp(): Ctx {
   return c;
 }
 
-const SCREENS: ScreenName[] = ['dashboard', 'food', 'exercise', 'weight', 'progress', 'settings', 'saved', 'goals', 'profile', 'data'];
+const SCREENS: ScreenName[] = ['chat', 'dashboard', 'food', 'exercise', 'weight', 'progress', 'settings', 'saved', 'goals', 'profile', 'data'];
 
 function screenFromHash(): ScreenName {
   const h = window.location.hash.replace(/^#/, '') as ScreenName;
-  return SCREENS.includes(h) ? h : 'dashboard';
+  return SCREENS.includes(h) ? h : 'chat';
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -91,7 +103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setData(null);
       return;
     }
-    const [food, exercise, weights, meals, customFoods, goals, days] = await Promise.all([
+    const [food, exercise, weights, meals, customFoods, goals, days, labs] = await Promise.all([
       db.getByProfile<FoodEntry>('foodEntries', p.id),
       db.getByProfile<ExerciseEntry>('exerciseEntries', p.id),
       db.getByProfile<WeightEntry>('weightEntries', p.id),
@@ -99,8 +111,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       db.getByProfile<FoodDef>('customFoods', p.id),
       db.getByProfile<GoalRecord>('goalHistory', p.id),
       db.getByProfile<DayStatus>('dayStatus', p.id),
+      db.getByProfile<LabResult>('labResults', p.id),
     ]);
-    setData({ profile: p, food, exercise, weights, meals, customFoods, goals, days });
+    setData({ profile: p, food, exercise, weights, meals, customFoods, goals, days, labs });
   }, []);
 
   useEffect(() => {
@@ -144,7 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setFoodIntent({});
       setSelectedDate(toDateKey());
       await loadProfile(id);
-      go('dashboard');
+      go('chat');
     },
     [loadProfile, go],
   );

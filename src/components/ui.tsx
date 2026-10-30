@@ -6,6 +6,7 @@ import type { SourceType } from '../lib/types';
 
 const paths: Record<string, string> = {
   dashboard: 'M4 5h16M4 10h16M4 15h10M4 20h6',
+  chat: 'M4 5h16v11H10l-5 4v-4H4z',
   food: 'M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5M16 21V3c2.5 1.5 3.5 4 3.5 7s-1.2 4-3.5 4',
   exercise: 'M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12',
   weight: 'M5 20h14l-1.5-11h-11zM9 9a3 3 0 0 1 6 0M12 13l1.5 2.5',

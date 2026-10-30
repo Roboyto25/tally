@@ -15,6 +15,7 @@
   --carbs: #3f62a0;
   --fat: #8f6310;
   --fiber: #57702a;
+  --satfat: #8a3b5c;
   --over: #b23a48;
   --warn-bg: #fbf1e1;
   --warn-ink: #6b4300;
@@ -36,6 +37,7 @@
     --carbs: #86a3e4;
     --fat: #dcae55;
     --fiber: #a2bb6a;
+    --satfat: #e08aac;
     --over: #ef7c89;
     --warn-bg: #33291a;
     --warn-ink: #f2cf94;
@@ -103,7 +105,7 @@ img { max-width: 100%; }
 
 .bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(3, 1fr);
   background: var(--surface); border-top: 2px solid var(--rule);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -172,6 +174,8 @@ img { max-width: 100%; }
 .tone-carbs .meter-fill { background: var(--carbs); }
 .tone-fat .meter-fill { background: var(--fat); }
 .tone-fiber .meter-fill { background: var(--fiber); }
+.tone-satfat .meter-fill { background: var(--satfat); }
+.tone-satfat .meter-label { color: var(--satfat); }
 .meter.over .meter-fill { background: repeating-linear-gradient(135deg, var(--over) 0 6px, transparent 6px 9px), var(--over); }
 .meter.over .meter-value::after { content: ' over'; color: var(--over); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .meter-fill { transition: none; } }
@@ -333,11 +337,12 @@ textarea { resize: vertical; line-height: 1.4; }
 .compare div, .about div { display: grid; grid-template-columns: minmax(120px, 40%) 1fr; gap: 10px; border-bottom: 1px solid var(--hair); padding-bottom: 6px; }
 .compare dt, .about dt { font-weight: 700; }
 .compare dd, .about dd { margin: 0; }
-.target-summary { margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); border-top: 5px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.target-summary { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); border-top: 5px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .target-summary div { padding: 6px 4px; }
 .target-summary dt { font-size: 0.78rem; font-weight: 700; }
 .target-summary dd { margin: 0; font-weight: 900; font-size: 1.1rem; }
 .target-summary .protein dt, .target-summary .protein dd { color: var(--protein); }
+.target-summary .satfat dt, .target-summary .satfat dd { color: var(--satfat); }
 @media (max-width: 400px) { .target-summary { grid-template-columns: repeat(3, 1fr); } }
 .rec { display: flex; flex-direction: column; gap: 10px; border-left: 4px solid var(--ink); padding: 4px 0 4px 12px; }
 .rec-too_slow, .rec-too_fast { border-left-color: var(--fat); }
@@ -356,6 +361,7 @@ textarea { resize: vertical; line-height: 1.4; }
 .chart .bar { fill: var(--ink); }
 .chart.tone-protein .bar { fill: var(--protein); }
 .chart.tone-fiber .bar { fill: var(--fiber); }
+.chart.tone-satfat .bar { fill: var(--satfat); }
 .chart .bar.over { fill: var(--over); }
 .chart .bar-g.active .bar { opacity: 0.75; }
 .chart .bar-g:focus { outline: none; }
@@ -395,3 +401,77 @@ textarea { resize: vertical; line-height: 1.4; }
 .dialog-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 .toast { position: fixed; left: 0; right: 0; bottom: calc(72px + env(safe-area-inset-bottom)); display: flex; justify-content: center; pointer-events: none; z-index: 30; }
 .toast span { background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: var(--radius); font-weight: 700; box-shadow: 0 4px 14px rgb(0 0 0 / 0.2); }
+
+
+/* ---------- v2: cholesterol coaching ---------- */
+.label-sub { font-weight: 800; font-size: 0.85rem; margin-top: -2px; }
+.label-pair { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 0.92rem; }
+.nutrient-grid.ext { grid-template-columns: repeat(4, 1fr); }
+.nutrient-grid label.satfat span { color: var(--satfat); }
+.nutrient-grid input::placeholder { color: var(--muted); }
+.quick-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.quick-actions .btn { padding: 6px 4px; font-size: 0.85rem; flex-direction: column; gap: 2px; min-height: 58px; }
+@media (max-width: 380px) { .quick-actions { grid-template-columns: 1fr 1fr; } }
+.idea-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.idea-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--hair); }
+.nowrap { white-space: nowrap; }
+.icon-btn.sm { width: 34px; height: 34px; }
+.topbar .icon-btn { width: 40px; height: 40px; }
+.topbar .icon-btn.on { background: var(--hair); }
+.sidebar .nav-sep { height: 1px; background: var(--hair); margin: 8px 12px; }
+
+/* chat */
+.content-chat { padding-bottom: 0; }
+.chat { display: flex; flex-direction: column; min-height: calc(100vh - 130px); }
+.chat-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--rule); padding-bottom: 6px; }
+.chat-log { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 16px 0 calc(150px + env(safe-area-inset-bottom)); }
+.chat-welcome { display: flex; flex-direction: column; gap: 10px; }
+.chat-hello { font-size: 1.15rem; font-weight: 700; }
+.msg { display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
+.msg-text { white-space: pre-line; line-height: 1.45; }
+.msg-user { align-self: flex-end; max-width: 85%; }
+.msg-user .msg-text { background: var(--ink); color: var(--paper); padding: 9px 13px; border-radius: 14px 14px 4px 14px; }
+.msg-tally { align-self: flex-start; width: 100%; }
+.msg-tally .msg-text { padding-left: 10px; border-left: 3px solid var(--ink); }
+.chat-input {
+  position: fixed; left: 0; right: 0; bottom: calc(58px + env(safe-area-inset-bottom)); z-index: 9;
+  display: flex; gap: 6px; align-items: flex-end;
+  padding: 8px 12px; background: var(--paper); border-top: 1px solid var(--hair);
+}
+.chat-input textarea { min-height: 44px; max-height: 140px; resize: none; border-radius: 22px; padding: 10px 14px; line-height: 1.35; }
+.chat-input .send { border-radius: 22px; min-width: 64px; }
+@media (min-width: 900px) {
+  .chat-input { left: 232px; bottom: 0; padding: 12px max(16px, calc((100vw - 232px - 760px) / 2 + 32px)); }
+  .chat-log { padding-bottom: 110px; }
+  .chat { min-height: calc(100vh - 64px); }
+}
+
+.card { background: var(--surface); border: 1.5px solid var(--hair); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.card-pending { border-color: var(--ink); }
+.card-discarded { opacity: 0.6; }
+.card-title { font-weight: 800; }
+.card-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-status { font-weight: 700; font-size: 0.9rem; color: var(--protein); }
+.card-discarded .card-status { color: var(--muted); }
+.meal-select { width: auto; min-height: 38px; padding: 6px 10px; font-weight: 700; }
+.mc-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mc-items li { padding: 6px 0 6px 8px; border-bottom: 1px solid var(--hair); border-left: 3px solid var(--protein); }
+.mc-items li.est { border-left-color: var(--fat); }
+.mc-items li.unmatched { border-left-color: var(--over); }
+.mc-line { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; }
+.mc-name { font-weight: 600; text-transform: capitalize; }
+.mc-qty { display: inline-flex; align-items: center; gap: 4px; }
+.mc-qty input { width: 58px; min-height: 36px; padding: 4px 6px; text-align: right; }
+.mc-kcal { font-weight: 800; min-width: 40px; text-align: right; }
+.mc-macros { font-size: 0.8rem; }
+.mc-note { font-size: 0.8rem; color: var(--warn-ink); }
+.mc-total { display: flex; flex-wrap: wrap; gap: 4px 14px; border-top: 5px solid var(--rule); padding-top: 6px; font-size: 0.92rem; }
+.mc-block { font-size: 0.85rem; color: var(--over); font-weight: 700; }
+.impact { font-size: 0.88rem; background: var(--paper); padding: 8px 10px; border-radius: var(--radius); }
+.recs-card { gap: 0; padding: 0; }
+.recs-card .rec { padding: 12px; border-bottom: 1px solid var(--hair); display: flex; flex-direction: column; gap: 6px; }
+.rec-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.rec-kcal { font-weight: 800; white-space: nowrap; }
+.rec-why { margin: 0; padding-left: 18px; font-size: 0.86rem; display: flex; flex-direction: column; gap: 2px; }
+.rec-items { margin: 0; padding-left: 18px; }
+.rec-gpt { padding: 10px 12px; }

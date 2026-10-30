@@ -60,7 +60,28 @@ export function macrosFor(calories: number, goalWeightLb: number, preferredProte
   const fat = Math.round((calories * 0.28) / 9);
   const carbs = Math.max(0, Math.round((calories - protein * 4 - fat * 9) / 4));
   const fiber = Math.round((calories / 1000) * 14);
-  return { calories, protein, carbs, fat, fiber };
+  return { calories, protein, carbs, fat, fiber, ...extDefaults(calories) };
+}
+
+/**
+ * Default limits for the cholesterol-related nutrients.
+ * - Saturated fat: under 10% of calories (Dietary Guidelines for Americans; AHA suggests
+ *   about 6% for people lowering LDL, so a clinician may set it lower).
+ * - Soluble fiber: 7 g/day, inside the 5–10 g/day range commonly cited for LDL lowering.
+ * - Sodium: 2,300 mg/day (Dietary Guidelines upper limit).
+ * Dietary cholesterol has no default limit: it is tracked and shown, but it is not the
+ * main driver of blood LDL for most people.
+ */
+export function extDefaults(calories: number): { satFat: number; solubleFiber: number; sodium: number } {
+  return { satFat: Math.round((calories * 0.1) / 9), solubleFiber: 7, sodium: 2300 };
+}
+
+export type FullTargets = Targets & { satFat: number; solubleFiber: number; sodium: number };
+
+/** Fills defaults for profiles saved before the extended targets existed. */
+export function resolveTargets(t: Targets): FullTargets {
+  const d = extDefaults(t.calories);
+  return { ...t, satFat: t.satFat ?? d.satFat, solubleFiber: t.solubleFiber ?? d.solubleFiber, sodium: t.sodium ?? d.sodium };
 }
 
 export function computeTargets(input: TargetInput): TargetResult {
@@ -89,6 +110,8 @@ export function computeTargets(input: TargetInput): TargetResult {
 /** Returns a message when manually edited macros don't add up to the calorie target. */
 export function consistencyWarning(t: Targets): string | null {
   if (t.fiber > t.carbs) return 'Fiber is part of total carbohydrate, so the fiber target can’t exceed the carb target.';
+  if (t.satFat !== undefined && t.satFat > t.fat) return 'Saturated fat is part of total fat, so its limit can’t exceed the fat target.';
+  if (t.solubleFiber !== undefined && t.solubleFiber > t.fiber) return 'Soluble fiber is part of total fiber, so its target can’t exceed the fiber target.';
   const fromMacros = energyFromMacros(t);
   if (t.calories <= 0) return 'Calorie target must be above zero.';
   const gap = fromMacros - t.calories;

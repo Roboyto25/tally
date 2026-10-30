@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useApp } from '../state';
-import type { FoodDef, FoodEntry, LoggedItem, MealCategory, Nutrients, SavedMeal } from '../lib/types';
+import type { ExtKey, FoodDef, FoodEntry, LoggedItem, MealCategory, Nutrients, SavedMeal } from '../lib/types';
+import { EXT_KEYS } from '../lib/types';
 import { MEALS, MEAL_LABEL } from '../lib/types';
 import { parseFoodText, matchFood, makeItem, defaultMealFor } from '../lib/parser';
 import { entrySource, fmtGrams, fmtKcal, itemsTotals, recalcItem, roundStored, scaleNutrients, unitsForFood, KEYS } from '../lib/nutrition';
@@ -11,6 +12,7 @@ import { addDays, formatDate, isValidDateKey, isValidTimeKey, nowIso, toDateKey,
 import { formatQuantity, unitLabel } from '../lib/units';
 import { hashText, uid } from '../lib/id';
 import * as db from '../lib/db';
+import { markCardSaved, newMessage, recsCardFrom, recsFor, saveMessage } from '../coach';
 import { Confirm, Empty, Field, Icon, NumberInput, Section, Segmented, SourceBadge } from '../components/ui';
 
 // ---------- review model ----------
@@ -42,7 +44,8 @@ interface Draft {
 
 type Phase = 'compose' | 'review' | 'chatgpt';
 
-const NUTRIENT_LABEL: Record<keyof Nutrients, string> = { calories: 'kcal', protein: 'Protein', carbs: 'Carbs', fat: 'Fat', fiber: 'Fiber' };
+const NUTRIENT_LABEL: Record<keyof Nutrients, string> = { calories: 'kcal', protein: 'Protein', carbs: 'Carbs', fat: 'Fat', fiber: 'Fiber', satFat: 'Sat fat', solubleFiber: 'Soluble fiber', cholesterol: 'Cholesterol', sodium: 'Sodium' };
+const EXT_UNIT: Record<ExtKey, string> = { satFat: 'g', solubleFiber: 'g', cholesterol: 'mg', sodium: 'mg' };
 
 function lineFromItem(item: LoggedItem, notes: string[] = []): Line {
   return { key: uid(), item, candidates: [], notes };
@@ -56,6 +59,8 @@ function blocking(l: Line): string | null {
   if (!(l.item.quantity > 0)) return `Enter a quantity above zero for ${l.item.name}.`;
   if (!KEYS.every((k) => Number.isFinite(l.item!.nutrients[k]) && l.item!.nutrients[k] >= 0)) return `Nutrition values for ${l.item.name} must be zero or more.`;
   if (l.item.nutrients.fiber > l.item.nutrients.carbs + 0.05) return `Fiber can’t exceed total carbs for ${l.item.name}.`;
+  if ((l.item.nutrients.satFat ?? 0) > l.item.nutrients.fat + 0.05) return `Saturated fat can’t exceed total fat for ${l.item.name}.`;
+  if ((l.item.nutrients.solubleFiber ?? 0) > l.item.nutrients.fiber + 0.05) return `Soluble fiber can’t exceed total fiber for ${l.item.name}.`;
   return null;
 }
 
@@ -105,9 +110,19 @@ export function FoodScreen() {
     } else if (foodIntent.mealId) {
       const m = d.meals.find((x) => x.id === foodIntent.mealId);
       if (m) applyMeal(m);
+    } else if (foodIntent.items?.length) {
+      // handed over from a chat meal card or a recommendation
+      setDraft((s) => ({ ...s, meal: foodIntent.meal ?? s.meal, lines: foodIntent.items!.map((i) => lineFromItem({ ...i, id: uid() })) }));
+      setPhase('review');
+    } else if (foodIntent.startPhase === 'chatgpt') {
+      setDraft((s) => ({ ...s, meal: foodIntent.meal ?? s.meal, text: foodIntent.text ?? '' }));
+      if (foodIntent.photo) setPhoto(foodIntent.photo);
+      setPhase('chatgpt');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const returnTo = foodIntent.returnTo ?? 'dashboard';
 
   useEffect(() => {
     if (!photo) {
@@ -193,12 +208,20 @@ export function FoodScreen() {
     try {
       await db.putMany(writes as never);
       void db.requestPersistence();
+      if (foodIntent.chatMessageId) await markCardSaved(foodIntent.chatMessageId, entry.id);
+      if (returnTo === 'chat' && !draft.editingId) {
+        // same coaching reply the chat gives when a meal is saved there
+        const after = { ...d, food: [...d.food.filter((e) => e.id !== entry.id), entry] };
+        const r = recsFor(after, { limit: 2 });
+        const today = entry.date === toDateKey();
+        await saveMessage(newMessage(d.profile.id, 'tally', `Saved to ${MEAL_LABEL[entry.meal].toLowerCase()}.${today ? ` ${r.headline}` : ''}`, today && r.suggestions.length ? recsCardFrom(r) : undefined));
+      }
       await reload();
       toast(draft.editingId ? 'Entry updated' : `Saved to ${MEAL_LABEL[draft.meal].toLowerCase()}`);
       setPhoto(null);
       setFoodIntent({});
       setSelectedDate(draft.date);
-      go('dashboard');
+      go(returnTo);
     } catch (e) {
       toast(`Couldn’t save: ${e instanceof Error ? e.message : e}`);
     }
@@ -210,13 +233,13 @@ export function FoodScreen() {
     await reload();
     toast('Entry deleted');
     setFoodIntent({});
-    go('dashboard');
+    go(returnTo);
   }
 
   function cancel() {
     setPhoto(null);
     setFoodIntent({});
-    if (draft.editingId) go('dashboard');
+    if (draft.editingId || returnTo === 'chat') go(returnTo === 'chat' ? 'chat' : 'dashboard');
     else {
       setDraft(freshDraft(draft.date));
       setPhase('compose');
@@ -234,14 +257,20 @@ export function FoodScreen() {
         photoUrl={photoUrl}
         online={online}
         onRemovePhoto={() => setPhoto(null)}
-        onBack={() => setPhase(draft.lines.length ? 'review' : 'compose')}
+        onBack={() => {
+          if (!draft.lines.length && returnTo === 'chat') {
+            setPhoto(null);
+            setFoodIntent({});
+            go('chat');
+          } else setPhase(draft.lines.length ? 'review' : 'compose');
+        }}
         onManual={() => {
           const blank: Line = { ...lineFromItem({ id: uid(), name: desc.split('\n')[0].slice(0, 80) || 'Food', quantity: 1, unit: 'serving', nutrients: { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }, source: 'user', estimated: true }), problems: ['Enter the nutrition values.'] };
           setLines((ls) => [...ls.filter((l) => l.item), blank]);
           setPhase('review');
         }}
         onImport={(res, hash) => {
-          const imported = res.items.map((it) => ({ key: uid(), item: importedToLogged(it), candidates: [], notes: it.uncertain ? ['ChatGPT marked this as uncertain.'] : [], problems: it.problems.length ? it.problems : undefined }));
+          const imported = res.items.map((it, n) => ({ key: uid(), item: importedToLogged(it), candidates: [], notes: [...(it.uncertain ? ['ChatGPT marked this as uncertain.'] : []), ...(n === 0 && res.assumptions ? [`ChatGPT’s assumptions: ${res.assumptions}`] : [])], problems: it.problems.length ? it.problems : undefined }));
           // "all" replaces any rough local estimate so nothing is counted twice
           setDraft((s) => ({ ...s, importHash: hash, flags: { restaurant: false, dish: false }, lines: [...(chatScope === 'unmatched' ? s.lines.filter((l) => l.item) : []), ...imported] }));
           setDupOk(false);
@@ -355,6 +384,7 @@ export function FoodScreen() {
         <span>P {fmtGrams(totals.protein)} g</span>
         <span>C {fmtGrams(totals.carbs)} g</span>
         <span>F {fmtGrams(totals.fat)} g</span>
+        <span>Sat fat {fmtGrams(totals.satFat ?? 0)} g</span>
         <span>Fiber {fmtGrams(totals.fiber)} g</span>
       </section>
 
@@ -496,7 +526,9 @@ function ReviewLine({ line, food, allFoods, onChange, onRemove, index }: { line:
   }
 
   function setNutrient(k: keyof Nutrients, v: number | null) {
-    const nutrients = { ...it.nutrients, [k]: v ?? NaN };
+    const nutrients: Nutrients = { ...it.nutrients, [k]: v ?? NaN };
+    // a cleared extended value means "unknown", never zero
+    if (v === null && (EXT_KEYS as string[]).includes(k)) delete nutrients[k as ExtKey];
     const source = it.source === 'database' || it.source === 'custom' ? it.source : it.source;
     onChange({ ...line, item: { ...it, nutrients, manualOverride: true, source }, problems: undefined, overrideWarn: false });
   }
@@ -580,7 +612,17 @@ function ReviewLine({ line, food, allFoods, onChange, onRemove, index }: { line:
               {NUTRIENT_LABEL[k]}
               {k === 'calories' ? '' : ' g'}
             </span>
-            <NumberInput label={`${NUTRIENT_LABEL[k]} for ${it.name}${k === 'calories' ? '' : ' in grams'}`} value={Number.isFinite(it.nutrients[k]) ? (k === 'calories' ? Math.round(it.nutrients[k]) : Math.round(it.nutrients[k] * 10) / 10) : null} onChange={(v) => setNutrient(k, v)} />
+            <NumberInput label={`${NUTRIENT_LABEL[k]} for ${it.name}${k === 'calories' ? '' : ' in grams'}`} value={Number.isFinite(it.nutrients[k]) ? (k === 'calories' ? Math.round(it.nutrients[k]!) : Math.round(it.nutrients[k]! * 10) / 10) : null} onChange={(v) => setNutrient(k, v)} />
+          </label>
+        ))}
+      </div>
+      <div className="nutrient-grid ext">
+        {EXT_KEYS.map((k) => (
+          <label key={k} className={k === 'satFat' ? 'satfat' : ''}>
+            <span>
+              {NUTRIENT_LABEL[k]} {EXT_UNIT[k]}
+            </span>
+            <NumberInput label={`${NUTRIENT_LABEL[k]} for ${it.name} in ${EXT_UNIT[k]}, blank if unknown`} placeholder="?" value={typeof it.nutrients[k] === 'number' ? (EXT_UNIT[k] === 'mg' ? Math.round(it.nutrients[k]!) : Math.round(it.nutrients[k]! * 10) / 10) : null} onChange={(v) => setNutrient(k, v)} />
           </label>
         ))}
       </div>
@@ -872,7 +914,7 @@ function ChatGptHandoff({ description, photo, photoUrl, online, onRemovePhoto, o
         <h1>Estimate with ChatGPT</h1>
       </div>
       <p className="callout small">
-        Only the description below{photo ? ' and the photo' : ''} goes to ChatGPT, and only when you paste or share it. Your weight, targets, and history stay on this device. ChatGPT’s answer is an estimate; you’ll review it before anything is saved.
+        Only the description below{photo ? ' and the photo' : ''} goes to ChatGPT, and only when you paste or share it. Your weight, targets, history, and blood tests stay on this device. ChatGPT’s answer is an estimate; you’ll review it before anything is saved.
       </p>
       {!online && (
         <p className="warn" role="status">
@@ -956,6 +998,7 @@ function ChatGptHandoff({ description, photo, photoUrl, online, onRemovePhoto, o
                     <th scope="col">P</th>
                     <th scope="col">C</th>
                     <th scope="col">F</th>
+                    <th scope="col">Sat</th>
                     <th scope="col">Fib</th>
                   </tr>
                 </thead>
@@ -979,6 +1022,7 @@ function ChatGptHandoff({ description, photo, photoUrl, online, onRemovePhoto, o
                       <td>{fmtGrams(it.nutrients.protein)}</td>
                       <td>{fmtGrams(it.nutrients.carbs)}</td>
                       <td>{fmtGrams(it.nutrients.fat)}</td>
+                      <td>{it.nutrients.satFat === undefined ? '?' : fmtGrams(it.nutrients.satFat)}</td>
                       <td>{fmtGrams(it.nutrients.fiber)}</td>
                     </tr>
                   ))}

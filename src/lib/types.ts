@@ -11,9 +11,56 @@ export interface Nutrients {
   carbs: number; // total carbohydrate, fiber included
   fat: number;
   fiber: number;
+  /**
+   * Cholesterol-related nutrients (schema v2). Optional: `undefined` means unknown,
+   * which is never the same as zero. Records from v1 simply don't have them.
+   */
+  satFat?: number; // g
+  solubleFiber?: number; // g, part of fiber
+  cholesterol?: number; // mg, dietary
+  sodium?: number; // mg
 }
 
+export type ExtKey = 'satFat' | 'solubleFiber' | 'cholesterol' | 'sodium';
+export const EXT_KEYS: ExtKey[] = ['satFat', 'solubleFiber', 'cholesterol', 'sodium'];
+
+/**
+ * Daily targets. The extended limits are optional on stored profiles; use
+ * resolveTargets() to fill defaults for profiles created before v2.
+ */
 export interface Targets extends Nutrients {}
+
+export type LabMarker = 'ldl' | 'hdl' | 'total' | 'triglycerides';
+export const LAB_MARKERS: LabMarker[] = ['ldl', 'hdl', 'total', 'triglycerides'];
+export const LAB_LABEL: Record<LabMarker, string> = { ldl: 'LDL cholesterol', hdl: 'HDL cholesterol', total: 'Total cholesterol', triglycerides: 'Triglycerides' };
+
+/** A measured blood test. Never derived from food logs. */
+export interface LabResult {
+  id: string;
+  profileId: string;
+  date: string; // YYYY-MM-DD
+  unit: 'mg/dL' | 'mmol/L';
+  ldl?: number;
+  hdl?: number;
+  total?: number;
+  triglycerides?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChatRole = 'user' | 'tally';
+
+export interface ChatMessage {
+  id: string;
+  profileId: string;
+  role: ChatRole;
+  text: string;
+  /** structured content rendered as a card; see lib/chat.ts */
+  card?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /** Local hours (decimal). Times outside breakfast/lunch/dinner windows default to snack. */
 export interface MealBoundaries {

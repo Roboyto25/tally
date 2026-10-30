@@ -1,31 +1,54 @@
-import type { FoodDef, FoodEntry, LoggedItem, Nutrients, SourceType } from './types';
-import { ZERO } from './types';
+import type { ExtKey, FoodDef, FoodEntry, LoggedItem, Nutrients, SourceType } from './types';
+import { EXT_KEYS, ZERO } from './types';
 import { massToGrams, volumeToMl, ML_PER_CUP, ML_PER_TBSP, ML_PER_TSP, ML_PER_FLOZ, SIZE_UNITS } from './units';
 
-export const KEYS: (keyof Nutrients)[] = ['calories', 'protein', 'carbs', 'fat', 'fiber'];
+/** the five core nutrients every record has */
+export type CoreKey = 'calories' | 'protein' | 'carbs' | 'fat' | 'fiber';
+export const KEYS: CoreKey[] = ['calories', 'protein', 'carbs', 'fat', 'fiber'];
 
 export function scaleNutrients(n: Nutrients, factor: number): Nutrients {
-  return {
+  const out: Nutrients = {
     calories: n.calories * factor,
     protein: n.protein * factor,
     carbs: n.carbs * factor,
     fat: n.fat * factor,
     fiber: n.fiber * factor,
   };
+  for (const k of EXT_KEYS) if (typeof n[k] === 'number') out[k] = n[k]! * factor;
+  return out;
 }
 
+/**
+ * Adds two nutrient sets. Extended nutrients: known + unknown = the known part
+ * (a partial sum); unknown + unknown stays unknown. Use extCoverage() to say how
+ * much of a total is actually known.
+ */
 export function addNutrients(a: Nutrients, b: Nutrients): Nutrients {
-  return {
+  const out: Nutrients = {
     calories: a.calories + b.calories,
     protein: a.protein + b.protein,
     carbs: a.carbs + b.carbs,
     fat: a.fat + b.fat,
     fiber: a.fiber + b.fiber,
   };
+  for (const k of EXT_KEYS) {
+    const x = a[k];
+    const y = b[k];
+    if (typeof x === 'number' || typeof y === 'number') out[k] = (x ?? 0) + (y ?? 0);
+  }
+  return out;
 }
 
 export function sumNutrients(list: Nutrients[]): Nutrients {
   return list.reduce(addNutrients, { ...ZERO });
+}
+
+/** How many of the items have a value for an extended nutrient. */
+export function extCoverage(items: { nutrients: Nutrients }[], key: ExtKey): { known: number; total: number; complete: boolean } {
+  // items with essentially no calories (water, black coffee) don't make a total uncertain
+  const relevant = items.filter((i) => i.nutrients.calories >= 5 || typeof i.nutrients[key] === 'number');
+  const known = relevant.filter((i) => typeof i.nutrients[key] === 'number').length;
+  return { known, total: relevant.length, complete: known === relevant.length };
 }
 
 /** Units the food can be measured in, for unit pickers. */
@@ -142,11 +165,14 @@ export function fmtGrams(v: number): string {
 /** Round stored values to a sensible precision without losing much information. */
 export function roundStored(n: Nutrients): Nutrients {
   const r = (v: number) => Math.round(v * 10) / 10;
-  return { calories: r(n.calories), protein: r(n.protein), carbs: r(n.carbs), fat: r(n.fat), fiber: r(n.fiber) };
+  const out: Nutrients = { calories: r(n.calories), protein: r(n.protein), carbs: r(n.carbs), fat: r(n.fat), fiber: r(n.fiber) };
+  for (const k of EXT_KEYS) if (typeof n[k] === 'number' && Number.isFinite(n[k])) out[k] = k === 'sodium' || k === 'cholesterol' ? Math.round(n[k]!) : r(n[k]!);
+  return out;
 }
 
 export function isValidNutrients(n: unknown): n is Nutrients {
   if (!n || typeof n !== 'object') return false;
   const o = n as Record<string, unknown>;
-  return KEYS.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k] as number) && (o[k] as number) >= 0);
+  const ok = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  return KEYS.every((k) => ok(o[k])) && EXT_KEYS.every((k) => o[k] === undefined || o[k] === null || ok(o[k]));
 }

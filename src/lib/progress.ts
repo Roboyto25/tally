@@ -60,7 +60,7 @@ export interface Aggregate {
   workouts: number;
   exerciseMinutes: number;
   exerciseCalories: number;
-  adherence: { calorieDays: number; proteinDays: number; counted: number } | null;
+  adherence: { calorieDays: number; proteinDays: number; satFatDays: number; fiberDays: number; counted: number } | null;
 }
 
 export function aggregate(days: DaySummary[], targets: Targets | null, basis: DayBasis = 'logged'): Aggregate {
@@ -72,6 +72,9 @@ export function aggregate(days: DaySummary[], targets: Targets | null, basis: Da
     adherence = {
       calorieDays: counted.filter((d) => Math.abs(d.totals.calories - targets.calories) <= targets.calories * 0.1).length,
       proteinDays: counted.filter((d) => d.totals.protein >= targets.protein * 0.9).length,
+      // within the saturated-fat limit (default 10% of calories when the profile predates the target)
+      satFatDays: counted.filter((d) => (d.totals.satFat ?? 0) <= (targets.satFat ?? Math.round((targets.calories * 0.1) / 9))).length,
+      fiberDays: counted.filter((d) => d.totals.fiber >= targets.fiber * 0.9).length,
       counted: counted.length,
     };
   }

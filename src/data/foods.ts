@@ -1,4 +1,5 @@
 import type { FoodDef } from '../lib/types';
+import { FOOD_EXT } from './foodsExt';
 
 /**
  * Bundled food dataset.
@@ -271,6 +272,13 @@ const rows: Row[] = [
   ['pizza-pepperoni', 'Pizza, pepperoni, regular crust', 'Prepared', [276, 12, 30.1, 11.9, 2.5], { slice: 111 }, 'slice', ['pepperoni pizza'], { src: FNDDS, quality: 'Slice of a 14 inch pie; pizzerias vary.' }],
 ];
 
+function withExt(id: string, n: FoodDef['per']): FoodDef['per'] {
+  const e = FOOD_EXT[id];
+  if (!e) return n;
+  const out = { ...n, satFat: e[0], cholesterol: e[1], sodium: e[2] };
+  return e[3] === null ? out : { ...out, solubleFiber: e[3] };
+}
+
 function build(r: Row): FoodDef {
   const [id, name, category, per, portions, defaultUnit, synonyms, opts = {}] = r;
   return {
@@ -280,7 +288,7 @@ function build(r: Row): FoodDef {
     synonyms,
     basisAmount: 100,
     basisUnit: 'g',
-    per: { calories: per[0], protein: per[1], carbs: per[2], fat: per[3], fiber: per[4] },
+    per: withExt(id, { calories: per[0], protein: per[1], carbs: per[2], fat: per[3], fiber: per[4] }),
     portions,
     defaultUnit,
     liquid: opts.liquid,
@@ -292,4 +300,4 @@ function build(r: Row): FoodDef {
 
 export const FOODS: FoodDef[] = rows.map(build);
 export const FOOD_BY_ID: Record<string, FoodDef> = Object.fromEntries(FOODS.map((f) => [f.id, f]));
-export const DATASET_VERSION = '2026.10-1';
+export const DATASET_VERSION = '2026.10-2';
